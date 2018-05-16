@@ -1,0 +1,6 @@
+variables:
+  name: oversee
+
+inherit:
+  - jetbrains
+  - python
