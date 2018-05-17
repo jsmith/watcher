@@ -1,86 +1,119 @@
-import http.client
+import logging
 import os
 import smtplib
 import time
-import urllib.request
-
-import difflib
 
 import bs4
 import yaml
+from selenium import webdriver
 
 with open('.watcher.yaml') as f:
     config = yaml.load(f)
 
+email = config['email']
+password = config['password']
+
+del config['email']
+del config['password']
+
+
+IGNORE = ['[document]', 'html', 'head', 'script', 'style', 'body', 'meta', 'title', 'style']
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
+
+
+def same(new_soup, old_soup):
+    new_children = new_soup.findChildren()
+    old_children = old_soup.findChildren()
+
+    # We can't just compare lengths the zip the children together. Sometimes pages will have different lengths but the same content.
+    new = 0
+    old = 0
+    while True:
+        if new >= len(new_children) or old >= len(old_children):
+            break
+
+        new_element = new_children[new]
+        old_element = old_children[old]
+
+        new += 1
+        old += 1
+
+        if new_element.name != old_element.name:
+            logger.info('New element name ({}) does not match old element name ({})!'.format(new_element.name, old_element.name))
+            return False
+
+        if new_element.name in IGNORE:
+            continue
+
+        if new_element.text.strip() != old_element.text.strip():
+            logger.info('Found mismatch element:\n{}\nvs.{}'.format(old, new_element.text, old_element.text))
+            return False
+
+    return True
+
 
 def send_email(url):
     msg = 'WATCHER: {}'.format(url)
-    # set the 'from' address,
-    fromaddr = 'jacobsmithunb@gmail.com'
-    # set the 'to' addresses,
-    toaddrs = ['jacob.smith@unb.ca']
+    destination = ['jacob.smith@unb.ca']
 
-    # setup the email server,
-    server = smtplib.SMTP('smtp.gmail.com', 587)
-    server.starttls()
-    # add my account login name and password,
-    server.login("meail", "password")
-
-    # Print the email's contents
-    print('From: ' + fromaddr)
-    print('To: ' + str(toaddrs))
-    print('Message: ' + msg)
-
-    # send the email
-    server.sendmail(fromaddr, toaddrs, msg)
+    server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+    server.ehlo()
+    server.login(email, password)
+    server.sendmail(email, destination, msg)
     server.quit()
 
 
-while True:
-    for category_name in config:
-        category = config[category_name]
+def main():
+    options = webdriver.ChromeOptions()
+    options.add_argument('headless')
+    driver = webdriver.Chrome(executable_path='/usr/lib/chromium-browser/chromedriver', chrome_options=options)
+    while True:
+        for category_name in config:
+            category = config[category_name]
 
-        for url_name in category:
-            url = category[url_name]
+            for url_name in category:
+                url = category[url_name]
+                logger.info('Checking {}!'.format(url))
 
-            path = os.path.join(os.path.expanduser('~'), '.watcher', category_name, url_name)
-            if not os.path.exists(path):
-                previous_contents = None
-            else:
-                with open(path) as f:
-                    previous_contents = f.read()
+                path = os.path.join(os.path.expanduser('~'), '.watcher', category_name, url_name)
+                if not os.path.exists(path):
+                    previous_contents = None
+                else:
+                    with open(path) as f:
+                        previous_contents = f.read()
 
-            user_agent = 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.0.7) Gecko/2009021910 Firefox/3.0.7'
+                driver.get(url)
+                contents = driver.page_source
 
-            try:
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                req = urllib.request.Request(url, headers=headers)
-                resp = urllib.request.urlopen(req)
-                contents = resp.read()
-                contents = contents.decode()
-            except http.client.RemoteDisconnected:
-                contents = urllib.request.urlopen(url).read()
+                if previous_contents is None:
+                    logger.info('Previous contents of {} is None. Writing contents to {}!'.format(url, path))
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, 'w') as f:
+                        f.write(contents)
 
-            if previous_contents is None:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
+                    continue
+
+                old_soup = bs4.BeautifulSoup(previous_contents, "html.parser")
+                new_soup = bs4.BeautifulSoup(contents, "html.parser")
+                if same(new_soup, old_soup):
+                    continue
+
                 with open(path, 'w') as f:
+                    logger.info('Overwriting contents of {}'.format(path))
                     f.write(contents)
 
-                continue
+                send_email(url)
 
-            ignore = ['html', 'head', 'script', 'style', 'body']
-            check = ['a', 'p', 'li', 'h1', 'h2', 'h3', 'string', 'em', 'pre', 'code']
+        days = 1
+        time.sleep(days * 24 * 60 * 60)
 
-            soup = bs4.BeautifulSoup(contents, "html.parser")
-            for l1, l2 in zip(previous_contents.split('\n'), contents.split('\n')):
-                if l1.strip() != l2.strip():
-                    break
-            else:
-                continue
 
-            with open(path, 'w') as f:
-                f.write(contents)
-            send_email(url)
+if __name__ == '__main__':
+    main()
 
-    days = 1
-    time.sleep(days * 24 * 60 * 60)

@@ -14,7 +14,7 @@ setup(
     install_requires=[
         'PyYaml',
         'beautifulsoup4',
-        'requests'
+        'requests', 'selenium'
     ],
     entry_points={
         'console_scripts': ['oversee=oversee.main:main']
