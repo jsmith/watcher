@@ -2,12 +2,14 @@ import logging
 import os
 import smtplib
 import time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 import bs4
 import yaml
 from selenium import webdriver
 
-with open('.watcher.yaml') as f:
+with open(os.path.join(os.path.expanduser('~'), '.watcher.yaml')) as f:
     config = yaml.load(f)
 
 email = config['email']
@@ -17,7 +19,7 @@ del config['email']
 del config['password']
 
 
-IGNORE = ['[document]', 'html', 'head', 'script', 'style', 'body', 'meta', 'title', 'style']
+IGNORE = ['[document]', 'html', 'head', 'script', 'style', 'body', 'meta', 'title', 'style', 'div', 'noscript']
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +47,13 @@ def same(new_soup, old_soup):
         old += 1
 
         if new_element.name != old_element.name:
+            if len(new_children) > len(old_children):
+                new += 1
+                continue
+            elif len(old_children) > len(new_children):
+                old += 1
+                continue
+
             logger.info('New element name ({}) does not match old element name ({})!'.format(new_element.name, old_element.name))
             return False
 
@@ -59,13 +68,20 @@ def same(new_soup, old_soup):
 
 
 def send_email(url):
-    msg = 'WATCHER: {}'.format(url)
     destination = ['jacob.smith@unb.ca']
+
+    msg = MIMEMultipart()
+    msg['From'] = email
+    msg['To'] = destination[0]
+    msg['Subject'] = "Watcher: {}".format(url)
+
+    body = "Changes in {}".format(url)
+    msg.attach(MIMEText(body, 'plain'))
 
     server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
     server.ehlo()
     server.login(email, password)
-    server.sendmail(email, destination, msg)
+    server.sendmail(email, destination, msg.as_string())
     server.quit()
 
 
@@ -79,7 +95,7 @@ def main():
 
             for url_name in category:
                 url = category[url_name]
-                logger.info('Checking {}!'.format(url))
+                logger.info('Checking {}'.format(url))
 
                 path = os.path.join(os.path.expanduser('~'), '.watcher', category_name, url_name)
                 if not os.path.exists(path):
@@ -110,6 +126,7 @@ def main():
 
                 send_email(url)
 
+        logger.info('Sleeping :)')
         days = 1
         time.sleep(days * 24 * 60 * 60)
 
