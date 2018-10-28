@@ -23,7 +23,7 @@ sites:
     keys: [fall, engineering, software]
 ```
 
-Make sure to have [pipenv](https://github.com/pypa/pipenv/) installed then run these commands:
+Make sure to have [pipenv](https://github.com/pypa/pipenv/) installed and that you've allowed [less secure apps to access your email](https://www.google.com/settings/security/lesssecureapps). After you've done that, run these commands:
 ```
 sudo apt-get install chromium-chromedriver
 pipenv install
