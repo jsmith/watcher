@@ -1,4 +1,0 @@
-PyYaml
-beautifulsoup4
-requests
-selenium

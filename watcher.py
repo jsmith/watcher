@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import smtplib
 import time
 from email.mime.multipart import MIMEMultipart
@@ -16,15 +17,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def send_email(url, email, password):
-    destination = ['jacob.smith@unb.ca']
+def send_email(url, diffs, email, password, destination):
+    destination = [destination]
 
     msg = MIMEMultipart()
     msg['From'] = email
     msg['To'] = destination[0]
     msg['Subject'] = "Watcher: {}".format(url)
 
-    body = "Changes in {}".format(url)
+    def format_diff(key):
+        return f'{key} changed by {diffs[key]}'
+
+    body = f"Changes in {url}\n" + '\n'.join(map(format_diff, diffs))
     msg.attach(MIMEText(body, 'plain'))
 
     server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
@@ -34,30 +38,67 @@ def send_email(url, email, password):
     server.quit()
 
 
-def main():
+def main(path, times=None):
     options = webdriver.ChromeOptions()
     options.add_argument('headless')
-    driver = webdriver.Chrome(executable_path='/usr/lib/chromium-browser/chromedriver', chrome_options=options)
+    driver_src = '/usr/lib/chromium-browser/chromedriver'
+    if not os.path.isfile(driver_src):
+        raise FileNotFoundError(f'Make sure to install `chromedriver`. {driver_src} does not exist!')
 
+    driver = webdriver.Chrome(executable_path=driver_src, chrome_options=options)
+
+    check_count = 0
     while True:
-        file = os.path.join(os.path.expanduser('~'), '.watcher.yaml')
-        with open(file) as f:
+        with open(path) as f:
             config = yaml.load(f)
+
+        if 'email' not in config or 'password' not in config:
+            raise ValueError('`email` and `password` must be present in the yaml file!')
+
+        if 'sites' not in config:
+            raise ValueError('`sites` field must be present in the yaml file!')
+
+        if 'destination' not in config:
+            raise ValueError('`destination` field must be present in the yaml file!')           
 
         email = config['email']
         password = config['password']
+        destination = config['destination']
         sites = config['sites']
+
+        if not isinstance(sites, dict):
+            raise ValueError('`sites` must be a dictionary')
 
         for name in sites:
             information = sites[name]
+
+            if not isinstance(information, dict):
+                raise ValueError(f'`{name}` must be a dictionary')
+
+            if not isinstance(information, dict):
+                raise ValueError(f'`{name}` must be a dictionary')
+
+            if 'url' not in information:
+                raise ValueError(f'`{name}` must contain a `url` field')
+
+            if 'keys' not in information:
+                raise ValueError(f'`{name}` must contain a `keys` field. We determine if a site has changed by conting the `keys`.')
+
             if 'counts' not in information:
+                logger.info(f'Intilializing counts for {name}')
                 information['counts'] = {}
 
             url = information['url']
             keys = information['keys']
             previous_counts = information['counts']
 
-            logger.info('Checking {}'.format(url))
+            if not isinstance(url, str):
+                raise ValueError('`url` must be a string')
+
+            if not isinstance(keys, list) or not all([isinstance(key, str) for key in keys]):
+                raise ValueError('`keys` must be a list of strings!')
+
+            logger.info(f'===== Checking {url} ======')
 
             driver.get(url)
             contents = driver.page_source
@@ -76,10 +117,17 @@ def main():
                     diffs[key] = abs(previous_count - count)
 
             if diffs:
-                send_email(url, email, password)
+                logger.info(f'Found change: {diffs}')
+                send_email(url, diffs, email, password, destination)
 
-        with open(os.path.join(os.path.expanduser('~'), '.watcher.yaml'), 'w') as f:
+            print()
+
+        with open(path, 'w') as f:
             yaml.dump(config, f)
+        
+        check_count += 1
+        if times is not None and times == check_count:
+            break
 
         logger.info('Sleeping :)')
         days = 1
@@ -87,4 +135,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    path = os.path.join(os.path.expanduser('~'), '.watcher.yaml')
+    if len(sys.argv) > 1:
+        path = sys.argv[1]
+    
+    if not os.path.isfile(path):
+        raise FileNotFoundError('{} does not exist'.format(path))
+
+    main(path)
